@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DraftStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  SCHEDULED
+  PUBLISHED
+}
+
+enum ScheduleStatus {
+  PENDING
+  QUEUED
+  PROCESSING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum AttemptStatus {
+  STARTED
+  SUCCEEDED
+  RETRYABLE_FAILURE
+  PERMANENT_FAILURE
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  name               String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  sessions           Session[]
+  linkedinConnection LinkedInConnection?
+  strategies         ContentStrategy[]
+  drafts             PostDraft[]
+  auditEvents        AuditEvent[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model LinkedInConnection {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  linkedinMemberId      String   @unique
+  encryptedAccessToken  String
+  encryptedRefreshToken String?
+  expiresAt             DateTime?
+  scopes                String[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ContentStrategy {
+  id              String   @id @default(cuid())
+  userId          String
+  profession      String
+  audience        String
+  goals           String[]
+  tone            String
+  cadence         String
+  preferredTopics String[]
+  exclusions      String[]
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  drafts          PostDraft[]
+
+  @@index([userId, isActive])
+}
+
+model PostDraft {
+  id          String       @id @default(cuid())
+  userId      String
+  strategyId  String
+  status      DraftStatus  @default(DRAFT)
+  currentText String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy    ContentStrategy @relation(fields: [strategyId], references: [id])
+  versions    DraftVersion[]
+  approvals   Approval[]
+  schedules   PublicationSchedule[]
+
+  @@index([userId, status])
+}
+
+model DraftVersion {
+  id          String   @id @default(cuid())
+  draftId     String
+  version     Int
+  text        String
+  imagePrompt String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  draft       PostDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@unique([draftId, version])
+}
+
+model Approval {
+  id        String   @id @default(cuid())
+  draftId   String
+  versionId String
+  approved  Boolean
+  note      String?
+  createdAt DateTime @default(now())
+  draft     PostDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@index([draftId, createdAt])
+}
+
+model PublicationSchedule {
+  id             String         @id @default(cuid())
+  draftId        String
+  scheduledFor   DateTime
+  status         ScheduleStatus @default(PENDING)
+  idempotencyKey String         @unique
+  externalPostId String?
+  lastError      String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  draft          PostDraft      @relation(fields: [draftId], references: [id])
+  attempts       PublicationAttempt[]
+
+  @@index([status, scheduledFor])
+}
+
+model PublicationAttempt {
+  id         String        @id @default(cuid())
+  scheduleId String
+  attempt    Int
+  status     AttemptStatus
+  errorCode  String?
+  errorText  String?
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  schedule   PublicationSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, attempt])
+}
+
+model PromptVersion {
+  id           String        @id @default(cuid())
+  name         String
+  version      Int
+  template     String
+  schemaJson   Json
+  createdAt    DateTime      @default(now())
+  executions   AIExecution[]
+
+  @@unique([name, version])
+}
+
+model AIExecution {
+  id              String   @id @default(cuid())
+  promptVersionId String
+  provider        String
+  model           String
+  inputTokens     Int?
+  outputTokens    Int?
+  latencyMs       Int?
+  succeeded       Boolean
+  errorCode       String?
+  createdAt       DateTime @default(now())
+  promptVersion   PromptVersion @relation(fields: [promptVersionId], references: [id])
+}
+
+model AuditEvent {
+  id            String   @id @default(cuid())
+  userId        String?
+  action        String
+  entityType    String
+  entityId      String?
+  correlationId String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+}
+
